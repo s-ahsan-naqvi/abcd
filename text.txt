@@ -1,0 +1,468 @@
+!nvcc -arch=sm_75 test.cu -o test
+
+## cuda 1 add ------------------------------------------------------
+
+%%writefile add.cu
+#include<stdio.h>
+#include<cuda_runtime.h>
+
+__global__ void add(int a,int b,int *d)
+{
+  *d = a+b;
+}
+
+int main()
+{
+  int a=10,b=5;
+  int result;
+  int *d_result;
+
+  cudaMalloc((void**)&d_result,sizeof(int));
+
+  add<<<1,1>>>(a,b,d_result);
+
+  cudaMemcpy(&result,d_result,sizeof(int),cudaMemcpyDeviceToHost);
+
+  printf("Sum 0f %d and %d is %d",a,b,result);
+
+}
+
+## cuda add 2 ---------------------------------------------------------------------------
+
+%%writefile add.cu
+
+#include <iostream>
+#include <cmath>
+#include <cuda_runtime.h>
+
+const int N = 4; // Size of the matrices (N x N)
+
+// CUDA kernel to add two matrices
+__global__ void matrixAdd(int *a, int *b, int *c, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i < n && j < n) {
+        int index = i * n + j;
+        c[index] = a[index] + b[index];
+    }
+}
+
+int main() {
+    int *h_a, *h_b, *h_c; // Host matrices
+    int *d_a, *d_b, *d_c; // Device matrices
+
+    // Allocate memory on the host
+    h_a = new int[N * N];
+    h_b = new int[N * N];
+    h_c = new int[N * N];
+
+    // Initialize matrices on the host
+    for (int i = 0; i < N * N; ++i) {
+        h_a[i] = i;
+        h_b[i] = 2 * i;
+    }
+
+    // Allocate memory on the device
+    cudaMalloc((void**)&d_a, N * N * sizeof(int));
+    cudaMalloc((void**)&d_b, N * N * sizeof(int));
+    cudaMalloc((void**)&d_c, N * N * sizeof(int));
+
+    // Copy matrices from host to device
+    cudaMemcpy(d_a, h_a, N * N * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_b, h_b, N * N * sizeof(int), cudaMemcpyHostToDevice);
+
+    // Define block and grid sizes
+    dim3 blockSize(4, 4);
+    dim3 gridSize(ceil(static_cast<float>(N) / blockSize.x), ceil(static_cast<float>(N) / blockSize.y));
+
+    // Launch the kernel
+    matrixAdd<<<gridSize, blockSize>>>(d_a, d_b, d_c, N);
+
+    // Copy the result from device to host
+    cudaMemcpy(h_c, d_c, N * N * sizeof(int), cudaMemcpyDeviceToHost);
+
+    // Print the result
+    std::cout << "Matrix A:\n";
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            std::cout << h_a[i * N + j] << " ";
+        }
+        std::cout << "\n";
+    }
+
+    std::cout << "\nMatrix B:\n";
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            std::cout << h_b[i * N + j] << " ";
+        }
+        std::cout << "\n";
+    }
+
+    std::cout << "\nResultant Matrix C:\n";
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            std::cout << h_c[i * N + j] << " ";
+        }
+        std::cout << "\n";
+    }
+
+    // Free memory on the device
+    cudaFree(d_a);
+    cudaFree(d_b);
+    cudaFree(d_c);
+
+    // Free memory on the host
+    delete[] h_a;
+    delete[] h_b;
+    delete[] h_c;
+
+    return 0;
+}
+
+## cuda mult 1 ----------------------------------------------------------------------
+
+%%writefile mult.cu
+
+#include <iostream>
+#include <cuda_runtime.h>
+
+// CUDA kernel to multiply a row vector with a column vector
+__global__ void vectorMultiply(int *rowVector, int *colVector, int *result, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i == 0) {
+        result[0] = 0; // Initialize the result to 0
+        for (int j = 0; j < n; ++j) {
+            result[0] += rowVector[j] * colVector[j];
+        }
+    }
+}
+
+int main() {
+    int numRows, numCols;
+
+    // Get the size of the row vector from the user
+    std::cout << "Enter the number of rows in the row vector: ";
+    std::cin >> numRows;
+    if (numRows <= 0) {
+        std::cerr << "Error: The number of rows must be greater than 0.\n";
+        return 1;
+    }
+
+    // Get the size of the column vector from the user
+    std::cout << "Enter the number of columns in the column vector: ";
+    std::cin >> numCols;
+    if (numCols <= 0) {
+        std::cerr << "Error: The number of columns must be greater than 0.\n";
+        return 1;
+    }
+
+    if (numCols != numRows) {
+        std::cerr << "Error: The number of columns in the row vector must be equal to the number of rows in the column vector.\n";
+        return 1;
+    }
+
+    int *h_rowVector, *h_colVector, *h_result; // Host vectors
+    int *d_rowVector, *d_colVector, *d_result; // Device vectors
+
+    // Allocate memory on the host
+    h_rowVector = new int[numRows];
+    h_colVector = new int[numCols];
+    h_result = new int[1]; // Resultant vector size is set to 1x1
+
+    // Get values for the row vector from the user
+    std::cout << "Enter values for the row vector:\n";
+    for (int i = 0; i < numRows; ++i) {
+        std::cout << "Value " << i + 1 << ": ";
+        std::cin >> h_rowVector[i];
+    }
+
+    // Get values for the column vector from the user
+    std::cout << "Enter values for the column vector:\n";
+    for (int i = 0; i < numCols; ++i) {
+        std::cout << "Value " << i + 1 << ": ";
+        std::cin >> h_colVector[i];
+    }
+
+    // Allocate memory on the device
+    cudaMalloc((void**)&d_rowVector, numRows * sizeof(int));
+    cudaMalloc((void**)&d_colVector, numCols * sizeof(int));
+    cudaMalloc((void**)&d_result, 1 * sizeof(int)); // Resultant vector size is set to 1x1
+
+    // Copy vectors from host to device
+    cudaMemcpy(d_rowVector, h_rowVector, numRows * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_colVector, h_colVector, numCols * sizeof(int), cudaMemcpyHostToDevice);
+
+    // Define block and grid sizes
+    dim3 blockSize(256);
+    dim3 gridSize((1 + blockSize.x - 1) / blockSize.x); // Grid size set to 1
+
+    // Launch the kernel
+    vectorMultiply<<<gridSize, blockSize>>>(d_rowVector, d_colVector, d_result, numRows);
+
+    // Copy the result from device to host
+    cudaMemcpy(h_result, d_result, 1 * sizeof(int), cudaMemcpyDeviceToHost);
+
+    // Print the result
+    std::cout << "Resultant Scalar: " << h_result[0] << "\n";
+
+    // Free memory on the device
+    cudaFree(d_rowVector);
+    cudaFree(d_colVector);
+    cudaFree(d_result);
+
+    // Free memory on the host
+    delete[] h_rowVector;
+    delete[] h_colVector;
+    delete[] h_result;
+
+    return 0;
+}
+
+## cuda mult 2 -------------------------------------------------------------------------------------------------------------
+
+%%writefile mult.cu
+#include <stdio.h>
+#include <stdlib.h>
+#include <cuda_runtime.h>
+#include <chrono>
+
+// Define matrix dimensions
+#define M 128  // Matrix A rows
+#define P 128  // Matrix A columns, Matrix B rows
+#define N 128  // Matrix B columns
+
+// Define tile size for shared memory implementation
+#define TILE 32
+
+// Constant memory for matrix B (for Part 3)
+__constant__ float d_B_const[P*N];
+
+// Utility function to initialize matrices
+void initMatrix(float *mat, int rows, int cols) {
+    for (int i = 0; i < rows * cols; i++) {
+        mat[i] = (float)(rand() % 100) / 100.0f;
+    }
+}
+
+// Utility function to verify results (CPU matrix multiplication)
+void matMulCPU(float *A, float *B, float *C, int m, int p, int n) {
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            float sum = 0.0f;
+            for (int k = 0; k < p; k++) {
+                sum += A[i * p + k] * B[k * n + j];
+            }
+            C[i * n + j] = sum;
+        }
+    }
+}
+
+// Utility function to verify GPU results against CPU
+bool verifyResults(float *cpuResult, float *gpuResult, int size) {
+    const float epsilon = 1e-5;
+    for (int i = 0; i < size; i++) {
+        if (fabs(cpuResult[i] - gpuResult[i]) > epsilon) {
+            printf("Verification failed at index %d: CPU = %f, GPU = %f\n",
+                   i, cpuResult[i], gpuResult[i]);
+            return false;
+        }
+    }
+    return true;
+}
+
+// Part 1: Naive Global Memory Implementation
+__global__ void matMulGlobal(float *A, float *B, float *C, int m, int p, int n) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < m && col < n) {
+        float sum = 0.0f;
+        for (int k = 0; k < p; k++) {
+            sum += A[row * p + k] * B[k * n + col];
+        }
+        C[row * n + col] = sum;
+    }
+}
+
+// Part 2: Shared Memory Implementation (Tiled)
+__global__ void matMulShared(float *A, float *B, float *C, int m, int p, int n) {
+    // Shared memory for tiles
+    __shared__ float A_tile[TILE][TILE];
+    __shared__ float B_tile[TILE][TILE];
+
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+
+    // Calculate row and column indices for the output element
+    int row = by * TILE + ty;
+    int col = bx * TILE + tx;
+
+    float sum = 0.0f;
+
+    // Loop over tiles
+    for (int t = 0; t < (p + TILE - 1) / TILE; t++) {
+        // Load tiles into shared memory
+        if (row < m && t*TILE+tx < p)
+            A_tile[ty][tx] = A[row*p + t*TILE+tx];
+        else
+            A_tile[ty][tx] = 0.0f;
+
+        if (t*TILE+ty < p && col < n)
+            B_tile[ty][tx] = B[(t*TILE+ty)*n + col];
+        else
+            B_tile[ty][tx] = 0.0f;
+
+        __syncthreads();
+
+        // Multiply tiles
+        for (int k = 0; k < TILE; k++) {
+            sum += A_tile[ty][k] * B_tile[k][tx];
+        }
+
+        __syncthreads();
+    }
+
+    // Write result to global memory
+    if (row < m && col < n) {
+        C[row*n + col] = sum;
+    }
+}
+
+// Part 3: Constant Memory Implementation
+__global__ void matMulConstant(float *A, float *C, int m, int p, int n) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < m && col < n) {
+        float sum = 0.0f;
+        for (int k = 0; k < p; k++) {
+            sum += A[row * p + k] * d_B_const[k * n + col];
+        }
+        C[row * n + col] = sum;
+    }
+}
+
+// Main function to run all implementations and compare performance
+int main() {
+    // Size of matrices in bytes
+    size_t A_size = M * P * sizeof(float);
+    size_t B_size = P * N * sizeof(float);
+    size_t C_size = M * N * sizeof(float);
+
+    // Allocate host memory
+    float *h_A = (float*)malloc(A_size);
+    float *h_B = (float*)malloc(B_size);
+    float *h_C = (float*)malloc(C_size);
+    float *h_C_shared = (float*)malloc(C_size);
+    float *h_C_constant = (float*)malloc(C_size);
+    float *h_C_cpu = (float*)malloc(C_size);
+
+    // Initialize matrices
+    initMatrix(h_A, M, P);
+    initMatrix(h_B, P, N);
+
+    // Allocate device memory
+    float *d_A, *d_B, *d_C;
+    cudaMalloc(&d_A, A_size);
+    cudaMalloc(&d_B, B_size);
+    cudaMalloc(&d_C, C_size);
+
+    // Copy data from host to device
+    cudaMemcpy(d_A, h_A, A_size, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, h_B, B_size, cudaMemcpyHostToDevice);
+
+    // For constant memory version, copy matrix B to constant memory
+    cudaMemcpyToSymbol(d_B_const, h_B, B_size);
+
+    // Define grid and block dimensions
+    dim3 blockDim(TILE, TILE);
+    dim3 gridDim((N + blockDim.x - 1) / blockDim.x,
+                 (M + blockDim.y - 1) / blockDim.y);
+
+    // Compute CPU result for verification
+    auto start_cpu = std::chrono::high_resolution_clock::now();
+    matMulCPU(h_A, h_B, h_C_cpu, M, P, N);
+    auto end_cpu = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float> cpu_time = end_cpu - start_cpu;
+
+    printf("CPU Matrix Multiplication Time: %f seconds\n", cpu_time.count());
+
+    // PART 1: Global Memory Implementation
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
+    matMulGlobal<<<gridDim, blockDim>>>(d_A, d_B, d_C, M, P, N);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    float global_time = 0;
+    cudaEventElapsedTime(&global_time, start, stop);
+    global_time /= 1000.0f; // Convert to seconds
+
+    // Copy result back to host
+    cudaMemcpy(h_C, d_C, C_size, cudaMemcpyDeviceToHost);
+
+    // Verify global memory result
+    bool global_verified = verifyResults(h_C_cpu, h_C, M * N);
+    printf("\nPart 1: Global Memory Implementation\n");
+    printf("Execution Time: %f seconds\n", global_time);
+    printf("Verification: %s\n", global_verified ? "PASSED" : "FAILED");
+
+    // PART 2: Shared Memory Implementation
+    cudaEventRecord(start);
+    matMulShared<<<gridDim, blockDim>>>(d_A, d_B, d_C, M, P, N);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    float shared_time = 0;
+    cudaEventElapsedTime(&shared_time, start, stop);
+    shared_time /= 1000.0f; // Convert to seconds
+
+    // Copy result back to host
+    cudaMemcpy(h_C_shared, d_C, C_size, cudaMemcpyDeviceToHost);
+
+    // Verify shared memory result
+    bool shared_verified = verifyResults(h_C_cpu, h_C_shared, M * N);
+    printf("\nPart 2: Shared Memory Implementation (Tiled)\n");
+    printf("Execution Time: %f seconds\n", shared_time);
+    printf("Verification: %s\n", shared_verified ? "PASSED" : "FAILED");
+    printf("Performance Improvement over Global: %.2fx\n", global_time / shared_time);
+
+    // PART 3: Constant Memory Implementation
+    cudaEventRecord(start);
+    matMulConstant<<<gridDim, blockDim>>>(d_A, d_C, M, P, N);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    float constant_time = 0;
+    cudaEventElapsedTime(&constant_time, start, stop);
+    constant_time /= 1000.0f; // Convert to seconds
+
+    // Copy result back to host
+    cudaMemcpy(h_C_constant, d_C, C_size, cudaMemcpyDeviceToHost);
+
+    // Verify constant memory result
+    bool constant_verified = verifyResults(h_C_cpu, h_C_constant, M * N);
+    printf("\nPart 3: Constant Memory Implementation\n");
+    printf("Execution Time: %f seconds\n", constant_time);
+    printf("Verification: %s\n", constant_verified ? "PASSED" : "FAILED");
+    printf("Performance Improvement over Global: %.2fx\n", global_time / constant_time);
+
+    // Cleanup
+    free(h_A);
+    free(h_B);
+    free(h_C);
+    free(h_C_shared);
+    free(h_C_constant);
+    free(h_C_cpu);
+
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
+
+    return 0;
+}
