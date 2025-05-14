@@ -245,3 +245,84 @@ int main(int argc, char const *argv[]) {
     
     return 0;
 }
+
+---------------------------------------------------------------mpi sort---------------------------------------------------------------------
+
+#include <mpi.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+int compare(const void *a, const void *b) {
+    return (*(int*)a - *(int*)b);
+}
+
+// Merge two sorted arrays into result
+void merge(int *a, int n, int *b, int m, int *result) {
+    int i = 0, j = 0, k = 0;
+    while(i < n && j < m) {
+        if(a[i] < b[j]) result[k++] = a[i++];
+        else result[k++] = b[j++];
+    }
+    while(i < n) result[k++] = a[i++];
+    while(j < m) result[k++] = b[j++];
+}
+
+int main(int argc, char** argv) {
+    int rank, size, n = 16;
+    int *data = NULL;
+
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    int local_n = n / size;
+    int *local_data = (int *)malloc(local_n * sizeof(int));
+
+    // Root initializes data
+    if(rank == 0) {
+        data = (int *)malloc(n * sizeof(int));
+        printf("Original array:\n");
+        for(int i = 0; i < n; i++) {
+            data[i] = rand() % 100;
+            printf("%d ", data[i]);
+        }
+        printf("\n");
+    }
+
+    // Scatter the data to all processes
+    MPI_Scatter(data, local_n, MPI_INT, local_data, local_n, MPI_INT, 0, MPI_COMM_WORLD);
+
+    // Sort each process's local data
+    qsort(local_data, local_n, sizeof(int), compare);
+
+    // Gather all sorted subarrays at root
+    MPI_Gather(local_data, local_n, MPI_INT, data, local_n, MPI_INT, 0, MPI_COMM_WORLD);
+
+    if(rank == 0) {
+        // Merge the sorted subarrays sequentially
+        int *temp = (int *)malloc(local_n * sizeof(int));
+        int *merged = (int *)malloc(2 * local_n * sizeof(int));
+
+        // Initially, copy the first sorted chunk
+        for(int i = 0; i < local_n; i++) temp[i] = data[i];
+
+        for(int i = 1; i < size; i++) {
+            merge(temp, i * local_n, &data[i * local_n], local_n, merged);
+            for(int j = 0; j < (i + 1) * local_n; j++) temp[j] = merged[j];
+        }
+
+        printf("\nSorted array:\n");
+        for(int i = 0; i < n; i++) {
+            printf("%d ", temp[i]);
+        }
+        printf("\n");
+
+        free(temp);
+        free(merged);
+        free(data);
+    }
+
+    free(local_data);
+    MPI_Finalize();
+    return 0;
+}
