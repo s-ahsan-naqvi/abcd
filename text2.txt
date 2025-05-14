@@ -1,0 +1,247 @@
+ mpicc -o hello_mpi main2.c
+ mpiexec -quiet -np 4 ./hello_mpi
+
+----------------------------------------------------------parallel matrix multiplication using MPI---------------------------------------------------------------------------
+
+#include <mpi.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#define N 4 // Rows of A
+#define M 4 // Columns of A and rows of B
+#define P 4 // Columns of B
+
+int main(int argc, char** argv) {
+    MPI_Init(&argc, &argv);
+
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    // Number of rows of A for each process
+    int rows_per_proc = N / size;
+
+    int A[N][M], B[M][P], C[N][P];
+    int local_A[rows_per_proc][M];
+    int local_C[rows_per_proc][P];
+
+    // Initialize matrices on root process
+    if (rank == 0) {
+        // Fill A and B with some values
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < M; ++j)
+                A[i][j] = i + j;
+
+        for (int i = 0; i < M; ++i)
+            for (int j = 0; j < P; ++j)
+                B[i][j] = i * j;
+    }
+
+    // Scatter rows of A to all processes
+    MPI_Scatter(A, rows_per_proc * M, MPI_INT,
+                local_A, rows_per_proc * M, MPI_INT,
+                0, MPI_COMM_WORLD);
+
+    // Broadcast full B to all processes
+    MPI_Bcast(B, M * P, MPI_INT, 0, MPI_COMM_WORLD);
+
+    // Perform local matrix multiplication
+    for (int i = 0; i < rows_per_proc; ++i) {
+        for (int j = 0; j < P; ++j) {
+            local_C[i][j] = 0;
+            for (int k = 0; k < M; ++k) {
+                local_C[i][j] += local_A[i][k] * B[k][j];
+            }
+        }
+    }
+
+    // Gather all rows of C from each process
+    MPI_Gather(local_C, rows_per_proc * P, MPI_INT,
+               C, rows_per_proc * P, MPI_INT,
+               0, MPI_COMM_WORLD);
+
+    // Print result matrix C on root
+    if (rank == 0) {
+        printf("Result matrix C:\n");
+        for (int i = 0; i < N; ++i) {
+            for (int j = 0; j < P; ++j)
+                printf("%4d ", C[i][j]);
+            printf("\n");
+        }
+    }
+
+    MPI_Finalize();
+    return 0;
+}
+
+----------------------------------------------------parallel dot product mpi--------------------------------------------------------------
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <mpi.h>
+
+// Function to initialize the vectors with some values
+void initialize_vectors(float *A, float *B, int n) {
+    for (int i = 0; i < n; i++) {
+        A[i] = i + 1.0f;       // Vector A: [1, 2, 3, ..., n]
+        B[i] = log(i + 1.0f);  // Vector B: [log(1), log(2), log(3), ..., log(n)]
+    }
+}
+
+int main(int argc, char *argv[]) {
+    int rank, size;
+    int n = 1000000;  // Length of the vectors
+
+    // Initialize MPI
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);  // Get the rank of the process
+    MPI_Comm_size(MPI_COMM_WORLD, &size);  // Get the number of processes
+
+    // Ensure the number of processes is a divisor of n
+    if (n % size != 0) {
+        if (rank == 0) {
+            printf("The number of processes must divide the vector length %d\n", n);
+        }
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+
+    // Each process will handle a portion of the vectors
+    int local_n = n / size;
+    float *local_A = (float *)malloc(local_n * sizeof(float));
+    float *local_B = (float *)malloc(local_n * sizeof(float));
+
+    // Scatter the vectors A and B across all processes
+    MPI_Scatter(NULL, local_n, MPI_FLOAT, local_A, local_n, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Scatter(NULL, local_n, MPI_FLOAT, local_B, local_n, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+    // Calculate the partial dot product for the local chunks
+    float local_dot = 0.0f;
+    for (int i = 0; i < local_n; i++) {
+        local_dot += local_A[i] * local_B[i];
+    }
+
+    // Reduce all partial dot products to calculate the global dot product
+    float global_dot = 0.0f;
+    MPI_Reduce(&local_dot, &global_dot, 1, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    // Only the root process (rank 0) will print the result
+    if (rank == 0) {
+        printf("The global dot product is: %f\n", global_dot);
+
+        // Validation: Check the result by doing the computation on the root process
+        float *A = (float *)malloc(n * sizeof(float));
+        float *B = (float *)malloc(n * sizeof(float));
+        initialize_vectors(A, B, n);
+
+        float validation_dot = 0.0f;
+        for (int i = 0; i < n; i++) {
+            validation_dot += A[i] * B[i];
+        }
+
+        printf("Validation gives the dot product: %f\n", validation_dot);
+
+        free(A);
+        free(B);
+    }
+
+    // Free allocated memory
+    free(local_A);
+    free(local_B);
+
+    // Finalize MPI
+    MPI_Finalize();
+
+    return 0;
+}
+
+----------------------------------------------------------------------ping pong--------------------------------------------------------------------
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <mpi.h>
+
+#define PING_PONG_LIMIT 10
+
+int main(int argc, char const *argv[]) {
+    // Initialize MPI
+    MPI_Init(NULL, NULL);
+
+    int world_rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);  // Get the rank (ID) of the process
+
+    int world_size;
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);  // Get the total number of processes
+
+    // Check if there are exactly 2 processes, otherwise abort
+    if (world_size != 2) {
+        fprintf(stderr, "World size must be 2 for %s\n", argv[0]);
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+
+    int ping_pong_count = 0;  // Counter for ping-pong
+    int partner_rank = (world_rank + 1) % 2;  // Partner is the other rank (0 -> 1, 1 -> 0)
+
+    // Ping-Pong loop
+    while (ping_pong_count < PING_PONG_LIMIT) {
+        if (world_rank == ping_pong_count % 2) {
+            // If it's the sender process
+            ping_pong_count++;  // Increment the ping_pong_count
+            MPI_Send(&ping_pong_count, 1, MPI_INT, partner_rank, 0, MPI_COMM_WORLD);
+            printf("%d sent and incremented ping_pong_count: %d to %d\n", world_rank, ping_pong_count, partner_rank);
+        } else {
+            // If it's the receiver process
+            MPI_Recv(&ping_pong_count, 1, MPI_INT, partner_rank, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            printf("%d received ping_pong_count: %d from %d\n", world_rank, ping_pong_count, partner_rank);
+        }
+    }
+
+    // Finalize MPI
+    MPI_Finalize();
+
+    return 0;
+}
+
+----------------------------------------------------------------------------------------------------------------------------------------------
+
+#include <mpi.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>  // For log function
+
+int main(int argc, char const *argv[]) {
+    // Initialize MPI
+    MPI_Init(&argc, &argv);
+    
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);  // Get the rank (ID) of the process
+    MPI_Comm_size(MPI_COMM_WORLD, &size);  // Get the total number of processes
+    
+    // Compute values based on the rank
+    float u_i = rank * rank;                  // u_i = rank^2
+    float v_i = log(rank + 1.0);              // v_i = log(rank + 1)
+    float tmp = u_i * v_i;                    // tmp = u_i * v_i (this is a partial product)
+    
+    // This will hold the final reduced result
+    float result;
+    
+    // Perform a reduction operation (MPI_SUM) to sum up tmp values from all processes
+    MPI_Reduce(&tmp, &result, 1, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
+    
+    // Root process (rank 0) prints the result
+    if (rank == 0) {
+        printf("The reduced value is %f \n", result);
+        
+        // Validation by computing the same operation sequentially on all ranks (without MPI)
+        float validation = 0.0f;
+        for (int i = 0; i < size; ++i) {
+            validation += i * i + log(i + 1.0f);  // u_i = i^2, v_i = log(i + 1)
+        }
+        printf("Validation gives the value: %f \n", validation);
+    }
+    
+    // Finalize MPI
+    MPI_Finalize();
+    
+    return 0;
+}
